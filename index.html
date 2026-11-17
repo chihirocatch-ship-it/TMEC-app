@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>目線のプロ育成アプリ</title>
+    <!-- 外部AIライブラリ -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+
+    <!-- 分割したスタイルシート -->
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/wizard.css">
+    <link rel="stylesheet" href="css/practice.css">
+</head>
+<body>
+    <!-- ================= ステップ式ウィザード ================= -->
+    <div id="wizardContainer">
+        <div id="stepHeader">
+            <div class="step-item active" id="ind-1">1. テキスト入力</div>
+            <span class="step-arrow">▶</span>
+            <div class="step-item" id="ind-2">2. 画像入力</div>
+            <span class="step-arrow">▶</span>
+            <div class="step-item" id="ind-3">3. 顔の設定</div>
+            <span class="step-arrow">▶</span>
+            <div class="step-item" id="ind-4">4. 準備完了</div>
+        </div>
+
+        <!-- Step 1: テキスト入力 -->
+        <div class="wizard-step active" id="step-1">
+            <div class="step-card">
+                <h2>Step 1. プレゼン原稿を入力</h2>
+                <p>本番で読み上げる原稿を入力（または貼り付け）してください。画面下部のプロンプターに表示されます。</p>
+                <textarea id="inputScript">本日はお集まりいただきありがとうございます。
+まずは右側のグラフをご覧ください。この数値が示す通り、私たちのプロジェクトは順調に推移しています。
+次に、左側の表に注目してください。ここには今後の課題をまとめています。
+皆さんと共に、この課題を乗り越えていきたいと考えております。</textarea>
+                <div class="step-footer" style="justify-content: flex-end;">
+                    <button class="btn btn-primary" data-goto-step="2">次へ（画像入力） ▶</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: 画像入力 -->
+        <div class="wizard-step" id="step-2">
+            <div class="step-card">
+                <h2>Step 2. 会場・観客の写真を選択</h2>
+                <p>観客が写っている写真を選んでください。選ばない場合はデフォルトの教室写真が使われます。</p>
+                <input type="file" id="bgImageInput" accept="image/*" style="color: white;">
+                <div id="step2PreviewWrap">
+                    <img id="step2PreviewImg" crossorigin="anonymous" src="https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=1920&q=80">
+                </div>
+                <div class="step-footer">
+                    <button class="btn btn-secondary" data-goto-step="1">◀ 戻る</button>
+                    <button class="btn btn-primary" id="toStep3Btn" data-goto-step="3" disabled>⏳ AIモデル準備中...</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: 顔の設定 -->
+        <div class="wizard-step" id="step-3">
+            <div class="face-setup-header">
+                <div>
+                    <strong style="color:#39ff14; font-size:1.15rem;">Step 3. ターゲットにする顔を確認・調整</strong>
+                    <span id="faceCountBadge" style="margin-left:10px; font-size:0.9rem; color:#ccc;">解析中...</span>
+                    <div style="font-size:0.8rem; color:#999; margin-top:3px;">※写真の人物をクリックで枠を追加 ／ 緑の枠をクリックで削除できます</div>
+                </div>
+                <div class="face-setup-tools">
+                    <button class="btn btn-secondary btn-small" id="redetectBtn">🔍 AIで再抽出</button>
+                    <button class="btn btn-danger btn-small" id="clearTargetsBtn">🗑 すべてクリア</button>
+                </div>
+            </div>
+
+            <div id="setupStage">
+                <img id="setupImg" crossorigin="anonymous">
+                <div id="setupTargetsLayer"></div>
+            </div>
+
+            <div class="step-footer">
+                <button class="btn btn-secondary" data-goto-step="2">◀ 画像を選び直す</button>
+                <button class="btn btn-primary" id="toStep4Btn" data-goto-step="4">次へ（準備完了） ▶</button>
+            </div>
+        </div>
+
+        <!-- Step 4: 準備完了 -->
+        <div class="wizard-step" id="step-4">
+            <div class="step-card" style="max-width: 820px;">
+                <h2>Step 4. 準備完了！ポインターの動きを確認</h2>
+                <p>放置された観客は少しずつ退屈になっていきます。赤いポインターの動きを調整したらスタートを押してください。</p>
+                <div class="ready-grid">
+                    <div class="ready-box">
+                        <h3>📋 設定内容</h3>
+                        <ul class="summary-list">
+                            <li>原稿の文字数: <strong id="sumChars">0</strong> 文字</li>
+                            <li>設定した観客数: <strong id="sumPeople">0</strong> 人</li>
+                            <li>トラッキング: <strong id="sumCamera">カメラ起動中...</strong></li>
+                        </ul>
+                        <video id="calibVideo" autoplay playsinline style="margin-top: 10px;"></video>
+                    </div>
+                    <div class="ready-box">
+                        <h3>⚙️ 視線ポインターの事前調整</h3>
+                        <div class="calib-slider-row">
+                            <label>左右の感度: <span id="calibSensXVal">4.5</span></label>
+                            <input type="range" id="calibSensX" min="1.0" max="15.0" step="0.5" value="4.5">
+                        </div>
+                        <div class="calib-slider-row">
+                            <label>上下の感度: <span id="calibSensYVal">10.0</span></label>
+                            <input type="range" id="calibSensY" min="1.0" max="25.0" step="0.5" value="10.0">
+                        </div>
+                        <div class="calib-slider-row">
+                            <label style="color:#39ff14;">手ブレ補正: <span id="calibSmoothVal">85</span>%</label>
+                            <input type="range" id="calibSmooth" min="10" max="95" step="5" value="85">
+                        </div>
+                    </div>
+                </div>
+                <div class="step-footer">
+                    <button class="btn btn-secondary" data-goto-step="3">◀ 顔の設定に戻る</button>
+                    <button class="btn btn-primary" id="startPracticeBtn">▶ 練習スタート！</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 本番トレーニング画面 ================= -->
+    <div id="topBar">
+        <div class="top-left">
+            <button id="finishBtn">■ プレゼン終了</button>
+            <div id="roomMeterBox">
+                <span>会場集中度</span>
+                <div id="roomMeterTrack"><div id="roomMeterFill"></div></div>
+                <strong id="roomMeterText">100%</strong>
+            </div>
+            <div id="statusText">退屈そうな人に視線を向けて引き戻そう！</div>
+        </div>
+        <div class="top-right">
+            <div id="settingsPanel">
+                <div class="slider-group">
+                    <label>左右: <span id="sensXValue">4.5</span></label>
+                    <input type="range" id="sensXSlider" min="1.0" max="15.0" step="0.5" value="4.5">
+                </div>
+                <div class="slider-group">
+                    <label>上下: <span id="sensYValue">10.0</span></label>
+                    <input type="range" id="sensYSlider" min="1.0" max="25.0" step="0.5" value="10.0">
+                </div>
+                <div class="slider-group">
+                    <label style="color:#39ff14;">ブレ補正: <span id="smoothValue">85</span>%</label>
+                    <input type="range" id="smoothSlider" min="10" max="95" step="5" value="85">
+                </div>
+            </div>
+            <video id="videoElement" autoplay playsinline></video>
+        </div>
+    </div>
+
+    <div id="stageArea">
+        <img id="audienceImg" crossorigin="anonymous">
+        <div id="targetsContainer"></div>
+        <div id="prompter">
+            <div id="scriptText"></div>
+            <div id="recognizedText">🎤 マイクの許可をして、話し始めてください...</div>
+        </div>
+    </div>
+
+    <!-- リザルト画面 -->
+    <div id="resultScreen">
+        <h1 style="color:#39ff14;">PRESENTATION FINISHED!</h1>
+        <div id="resultRank">S</div>
+        <div id="resultStats"></div>
+        <div id="resultFeedback"></div>
+        <button class="btn btn-primary" id="restartBtn">最初からやり直す</button>
+    </div>
+
+    <div id="gazePointer"></div>
+
+    <!-- ES Modules エントリーポイント -->
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
